@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.ipynb_checkpoints/
+.pyre/
+.tox/
+.nox/
+
+# Local IDE settings
+.vscode/
+.idea/
+*.code-workspace
+
+# Logs and runtime artifacts
+*.log
+*.out
+*.err
+
+# Project outputs and generated experiment artifacts
+outputs/
+unsloth_compiled_cache/
+
+# Local data or temporary files
+*.tmp
+*.temp
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,247 @@
+# Nome logico do projeto para rastreabilidade dos artefatos.
+project_name: fine_tuning_backend_multimodelo_soja
+# Identificador exato do checkpoint a ser carregado.
+# Este campo continua obrigatorio mesmo quando model_family estiver definido.
+base_model_id: mistralai/Ministral-3-3B-Instruct-2512-BF16
+# Caminho para a raiz do dataset de imagens.
+dataset_root: ../dataset_kaggle_soja
+# Caminho para a run externa que contem os folds ja prontos.
+source_experiment_dir: ../ensaio_classif_soja_llm_multimodais/experiments_multimodal/cv_run_ministral-3_3b_20260318_002404
+# Pasta raiz onde os artefatos desta implementacao serao gravados.
+output_root: outputs
+# Conjunto canonico de rotulos esperados pelo pipeline.
+label_set:
+  - Broken
+  - Immature
+  - Intact
+  - Skin Damaged
+  - Spotted
+
+backend:
+  # Nome do backend principal a ser usado pela orquestracao.
+  # Valores validos hoje: unsloth, transformers.
+  name: unsloth
+  # Familia de runtime efetiva.
+  # Em geral deve acompanhar backend.name, mas fica explicita para auditoria.
+  runtime_family: unsloth
+  # Familia logica do modelo para regras de compatibilidade.
+  # Valores recomendados neste projeto:
+  # - ministral3
+  # - llama3
+  # - llama4
+  # - qwen25
+  # - qwen3
+  # - qwen25vl
+  # - qwen3vl
+  # - gemma3
+  # - deepseek_vl
+  # - deepseek_ocr
+  # - phi3_vision
+  model_family: ministral3
+  # Modo de quantizacao principal.
+  # Valores praticos mais usados:
+  # - qlora_4bit
+  # - lora_fp16
+  # - full_fp16
+  quantization_mode: qlora_4bit
+  # Indica se a execucao deve tentar Unsloth primeiro.
+  enable_unsloth: true
+  # Permite fallback para transformers quando necessario.
+  enable_transformers_fallback: true
+  # Perfil extra de dependencias recomendado para o ambiente.
+  # Exemplos:
+  # - unsloth-cu124
+  # - unsloth-cu121
+  # - transformers-cu124
+  # - transformers-cu121
+  # - transformers-cpu
+  extra_requirements_profile: unsloth-cu124
+
+# Guia rapido para trocar de familia de modelo.
+# Ajuste SEMPRE backend + base_model_id em conjunto.
+#
+# Ministral 3 3B:
+# base_model_id: mistralai/Ministral-3-3B-Instruct-2512-BF16
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: ministral3
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Ministral 3 8B:
+# base_model_id: mistralai/Ministral-3-8B-Instruct-2512-BF16
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: ministral3
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Llama 3.x:
+# base_model_id: meta-llama/Llama-3.2-11B-Vision-Instruct
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: llama3
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Llama 4:
+# base_model_id: unsloth/Llama-4-Scout-17B-16E-Instruct
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: llama4
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Qwen 2.5 texto:
+# base_model_id: Qwen/Qwen2.5-7B-Instruct
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: qwen25
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Qwen 3 texto:
+# base_model_id: Qwen/Qwen3-8B
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: qwen3
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Qwen 2.5 VL:
+# base_model_id: Qwen/Qwen2.5-VL-7B-Instruct
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: qwen25vl
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Qwen 3 VL:
+# base_model_id: Qwen/Qwen3-VL-8B-Instruct
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: qwen3vl
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Gemma 3 4B:
+# base_model_id: google/gemma-3-4b-it
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: gemma3
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# Gemma 3 12B:
+# base_model_id: google/gemma-3-12b-it
+# backend:
+#   name: unsloth
+#   runtime_family: unsloth
+#   model_family: gemma3
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: true
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: unsloth-cu124
+#
+# DeepSeek VL:
+# base_model_id: deepseek-ai/deepseek-vl2-small
+# backend:
+#   name: transformers
+#   runtime_family: transformers
+#   model_family: deepseek_vl
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: false
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: transformers-cu124
+#
+# DeepSeek OCR:
+# base_model_id: deepseek-ai/DeepSeek-OCR-2
+# backend:
+#   name: transformers
+#   runtime_family: transformers
+#   model_family: deepseek_ocr
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: false
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: transformers-cu124
+#
+# Phi 3 Vision:
+# base_model_id: microsoft/Phi-3.5-vision-instruct
+# backend:
+#   name: transformers
+#   runtime_family: transformers
+#   model_family: phi3_vision
+#   quantization_mode: qlora_4bit
+#   enable_unsloth: false
+#   enable_transformers_fallback: true
+#   extra_requirements_profile: transformers-cu124
+
+training:
+  seed: 42
+  num_folds: 5
+  num_epochs: 1
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  eval_strategy: epoch
+  logging_steps: 10
+  max_new_tokens: 16
+  num_workers: 0
+  save_total_limit: 2
+  train_prompt: "Classifique este grao de soja em exatamente uma das classes: Broken, Immature, Intact, Skin Damaged, Spotted. Responda apenas com o rotulo."
+
+memory:
+  load_in_4bit: true
+  gradient_checkpointing: true
+  bf16_if_available: true
+  max_image_size: 448
+
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+pilot_mode:
+  enabled: false
+  max_train_samples_per_fold: 256
+  max_val_samples_per_fold: 64
+  max_test_samples_per_fold: 64
