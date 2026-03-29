@@ -204,33 +204,57 @@ backend:
 #   extra_requirements_profile: transformers-cu124
 
 training:
+  # Semente global para reproducibilidade entre execucoes.
   seed: 42
+  # Quantidade total de folds esperada na CV.
   num_folds: 5
+  # Numero de epocas de treino por fold.
   num_epochs: 1
+  # Taxa de aprendizado base do otimizador.
   learning_rate: 2.0e-4
+  # Penalizacao L2 aplicada aos pesos treinaveis.
   weight_decay: 0.01
+  # Fracao inicial do treino usada para aquecimento da taxa de aprendizado.
   warmup_ratio: 0.03
+  # Numero de steps acumulados antes de aplicar update no otimizador.
   gradient_accumulation_steps: 8
+  # Batch size efetivo por dispositivo durante treino.
   per_device_train_batch_size: 1
+  # Batch size efetivo por dispositivo durante avaliacao.
   per_device_eval_batch_size: 1
+  # Estrategia de avaliacao interna durante treino.
   eval_strategy: epoch
+  # Intervalo de logging dos steps de treino.
   logging_steps: 10
+  # Numero maximo de tokens novos gerados na inferencia de classificacao.
   max_new_tokens: 16
+  # Quantidade de workers do DataLoader.
   num_workers: 0
+  # Limite de checkpoints mantidos quando houver salvamentos sucessivos.
   save_total_limit: 2
+  # Prompt supervisionado usado no treino e nas avaliacoes.
   train_prompt: "Classifique este grao de soja em exatamente uma das classes: Broken, Immature, Intact, Skin Damaged, Spotted. Responda apenas com o rotulo."
 
 memory:
+  # Ativa carregamento quantizado em 4 bits quando suportado.
   load_in_4bit: true
+  # Ativa gradient checkpointing para reduzir consumo de memoria.
   gradient_checkpointing: true
+  # Prioriza bf16 quando a GPU oferecer suporte.
   bf16_if_available: true
+  # Tamanho maximo da imagem de entrada apos redimensionamento.
   max_image_size: 448
 
 lora:
+  # Ativa injecao de adapters LoRA no modelo base.
   enabled: true
+  # Rank da decomposicao LoRA.
   r: 8
+  # Fator de escala aplicado aos adapters LoRA.
   alpha: 16
+  # Dropout aplicado nas camadas LoRA.
   dropout: 0.0
+  # Modulos alvo onde os adapters LoRA serao inseridos.
   target_modules:
     - q_proj
     - k_proj
@@ -241,7 +265,11 @@ lora:
     - down_proj
 
 pilot_mode:
+  # Define se a execucao usa subconjuntos reduzidos para validacao rapida do pipeline.
   enabled: false
+  # Limite de amostras de treino por fold no modo piloto.
   max_train_samples_per_fold: 256
+  # Limite de amostras de validacao por fold no modo piloto.
   max_val_samples_per_fold: 64
+  # Limite de amostras de teste por fold no modo piloto.
   max_test_samples_per_fold: 64

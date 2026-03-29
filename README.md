@@ -435,32 +435,28 @@ O pipeline falha explicitamente se:
 
 O piloto obrigatorio deve usar apenas `fold_0`, subset reduzido e `1` epoca. O YAML padrao ja nasce configurado para isso.
 
-### 1. Criar uma pasta de run local
+### 1. Executar o fold piloto
 
 ```powershell
-New-Item -ItemType Directory -Force -Path outputs\pilot_fold0
+python train_model_fold.py --config finetune_config.yaml --fold 0
 ```
 
-### 2. Executar o fold piloto
+O diretorio da run e criado automaticamente em `outputs/`, com nome derivado de modelo, backend, timestamp e modo.
 
-```powershell
-python train_model_fold.py --config finetune_config.yaml --fold 0 --run-dir outputs/pilot_fold0
-```
+### 2. Conferir os artefatos do fold
 
-### 3. Conferir os artefatos do fold
+Arquivos gerados dentro de `outputs/<modelo>_<backend>_AAAAMMDD_HHMMSS_pilot_fold0/fold_0/`:
 
-Arquivos gerados:
-
-- `outputs/pilot_fold0/fold_0/run_config.json`
-- `outputs/pilot_fold0/fold_0/runtime.log`
-- `outputs/pilot_fold0/fold_0/train_config_resolved.json`
-- `outputs/pilot_fold0/fold_0/train_history.json`
-- `outputs/pilot_fold0/fold_0/val_metrics_best.json`
-- `outputs/pilot_fold0/fold_0/predictions.csv`
-- `outputs/pilot_fold0/fold_0/metrics.json`
-- `outputs/pilot_fold0/fold_0/confusion_matrix.csv`
-- `outputs/pilot_fold0/fold_0/adapter/`
-- `outputs/pilot_fold0/fold_0/backend_metadata.json`
+- `run_config.json`
+- `runtime.log`
+- `train_config_resolved.json`
+- `train_history.json`
+- `val_metrics_best.json`
+- `predictions.csv`
+- `metrics.json`
+- `confusion_matrix.csv`
+- `adapter/`
+- `backend_metadata.json`
 
 O arquivo `backend_metadata.json` registra:
 
@@ -489,10 +485,33 @@ python run_model_cv.py --config finetune_config.yaml
 
 O runner:
 
-- cria uma nova pasta em `outputs/cv_run_finetune_YYYYMMDD_HHMMSS`
+- cria uma nova pasta em `outputs/<modelo>_<backend>_AAAAMMDD_HHMMSS_cv_full`
 - executa os folds `0..4` em sequencia
 - aborta se qualquer fold falhar
 - roda a agregacao final ao final da CV
+
+### Como retomar uma run existente a partir de um fold especifico
+
+Se um fold intermediario falhar ou a maquina reiniciar, voce pode retomar a mesma pasta mae sem perder os folds ja concluidos.
+
+Fluxo recomendado:
+
+1. Apague manualmente a pasta do fold incompleto, por exemplo `fold_1`.
+2. Reexecute a CV informando a pasta mae da run e o fold de retomada.
+
+Exemplo:
+
+```powershell
+python run_model_cv.py --config finetune_config.yaml --run-dir outputs/ministral_3_3b_instruct_2512_bf16_unsloth_20260328_132513_cv_full --start-fold 1
+```
+
+Esse comando:
+
+- preserva os folds ja concluidos
+- executa apenas do fold indicado em diante
+- roda a agregacao final ao terminar
+
+Regra importante: use `--start-fold > 0` apenas com `--run-dir`, para retomar uma run ja existente.
 
 ## Onde localizar adapters e artefatos
 
@@ -546,7 +565,7 @@ python -c "from pathlib import Path; from src.backend_multimodelo_soja.experimen
 ### Rodar apenas a agregacao de uma run ja concluida
 
 ```powershell
-python aggregate_model_cv.py --run-dir outputs/cv_run_finetune_20260328_000000
+python aggregate_model_cv.py --run-dir outputs/ministral_3_3b_instruct_2512_bf16_unsloth_20260328_132513_cv_full
 ```
 
 ## Estado atual da v1

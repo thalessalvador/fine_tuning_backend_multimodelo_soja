@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -17,11 +17,35 @@ def parse_args():
         Nenhum.
 
     Retorno:
-        argparse.Namespace: Argumentos com caminho do config.
+        argparse.Namespace: Argumentos com config, run-dir opcional e fold inicial.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--run-dir")
+    parser.add_argument("--start-fold", type=int, default=0)
     return parser.parse_args()
+
+
+def resolve_run_dir(args: argparse.Namespace, config: dict) -> Path:
+    """Resolve se a execucao cria nova run ou retoma uma existente.
+
+    Parametros:
+        args: Argumentos de linha de comando.
+        config: Configuracao resolvida da run.
+
+    Retorno:
+        Path: Diretorio da run a ser usado.
+    """
+    if args.run_dir:
+        run_dir = Path(args.run_dir).resolve()
+        if not run_dir.exists():
+            raise FileNotFoundError(f"Diretorio de run inexistente: {run_dir}")
+        return run_dir
+
+    if int(args.start_fold) > 0:
+        raise ValueError("--start-fold > 0 exige informar --run-dir para retomar uma run existente.")
+
+    return build_run_dir(config)
 
 
 def main():
@@ -35,9 +59,19 @@ def main():
     """
     args = parse_args()
     config = load_config(Path(args.config).resolve())
-    run_dir = build_run_dir(config)
+    num_folds = int(config["training"]["num_folds"])
+
+    if args.start_fold < 0 or args.start_fold >= num_folds:
+        raise ValueError(f"--start-fold deve estar entre 0 e {num_folds - 1}.")
+
+    run_dir = resolve_run_dir(args, config)
     logger = setup_logger(run_dir / "runtime.log", "run_cv")
     logger.info("Diretorio da run: %s", run_dir)
+
+    if args.run_dir:
+        logger.info("Retomando run existente a partir do fold %s", args.start_fold)
+    else:
+        logger.info("Iniciando nova run de CV a partir do fold %s", args.start_fold)
 
     run_config = {
         "project_name": config["project_name"],
@@ -50,11 +84,13 @@ def main():
         "memory": config["memory"],
         "lora": config["lora"],
         "pilot_mode": config["pilot_mode"],
+        "start_fold": args.start_fold,
+        "resumed_run": bool(args.run_dir),
     }
     with (run_dir / "run_config.json").open("w", encoding="utf-8") as handle:
         json.dump(run_config, handle, ensure_ascii=False, indent=2)
 
-    for fold in range(int(config["training"]["num_folds"])):
+    for fold in range(args.start_fold, num_folds):
         logger.info("Executando fold %s", fold)
         command = [
             sys.executable,
