@@ -2,6 +2,36 @@
 
 Projeto de fine-tuning supervisionado multimodal com backend modular para classificacao de graos de soja. Esta implementacao separa a orquestracao experimental da camada de runtime de treino e inferencia para permitir trocar a familia de backend com menor atrito tecnico, preservando a comparabilidade metodologica com os manifests e artefatos do projeto anterior.
 
+## Status atual do projeto
+
+O caminho estavel e suportado deste projeto hoje e o backend `transformers`. As tentativas de estabilizar um backend nativo em `unsloth` foram interrompidas nesta versao por incompatibilidades praticas observadas no ambiente de execucao usado no desenvolvimento, uma `NVIDIA GeForce RTX 5070 Laptop GPU` com stack recente de CUDA/PyTorch.
+
+O suporte a `unsloth` fica tratado como trabalho futuro. A intencao era reduzir VRAM e tempo por step para abrir espaco a testes com modelos maiores, inclusive variantes de 8B. Na pratica, isso nao se confirmou com robustez suficiente para manter o recurso como caminho principal do projeto.
+
+### Tentativas realizadas com Unsloth
+
+- execucao nativa no Windows com PyTorch nightly e CUDA 12.8
+- execucao em Docker com a imagem oficial da Unsloth
+- ajuste de import order para priorizar o patching do Unsloth
+- testes com `device_map` automatico e forcado em GPU
+- testes com diferentes combinacoes de gradient checkpointing
+- fallback para `transformers` apos falha do backend nativo
+
+### Problemas encontrados
+
+- falha recorrente no backward do caminho nativo da Unsloth: `RuntimeError: Function MmBackward0 returned an invalid gradient at index 1 - expected device meta but got cuda:0`
+- inconsistencias de device no fallback apos tentativa nativa: mistura de tensores em CPU e `cuda:0`
+- warnings e incompatibilidades do stack Triton/Unsloth em Blackwell, incluindo `Failed to import Triton kernels`
+- ausencia de ganho pratico de VRAM e throughput em relacao ao baseline estavel em `transformers`
+- em alguns testes, aumento de consumo e degradacao de performance, com passos significativamente mais lentos do que o baseline anterior
+
+### Decisao desta versao
+
+- manter `transformers` como backend padrao e suportado
+- preservar a comparabilidade experimental com os folds externos e com o pipeline anterior
+- documentar `unsloth` apenas como trilha futura, e nao como caminho operacional desta versao
+
+
 ## Objetivo do projeto
 
 - reutilizar exatamente os `fold_manifest.csv` ja produzidos pelo experimento anterior
@@ -19,7 +49,7 @@ O projeto anterior atende bem como pipeline experimental controlado, mas o acopl
 - este projeto vive integralmente em `C:\Projetos\Pos_ia\TCC\fine_tuning_backend_multimodelo_soja`
 - o projeto antigo em `C:\Projetos\Pos_ia\TCC\fine_tuning_qwen3_vl_8B_soja` e apenas referencia de leitura
 - a comparabilidade metodologica e preservada pelo reuso dos manifests externos, pelos mesmos subsets `train`, `val` e `test`, pelo mesmo conjunto de metricas e pelos mesmos artefatos agregados
-- a camada de treino agora usa um contrato de backend com implementacoes em `transformers` e `unsloth`
+- a camada de treino usa hoje `transformers` como backend estavel e deixa a trilha `unsloth` como trabalho futuro
 
 ## Referencias externas
 
@@ -68,13 +98,12 @@ Arquivos principais:
 
 - `src/backend_multimodelo_soja/backends/base_backend.py`
 - `src/backend_multimodelo_soja/backends/transformers_backend.py`
-- `src/backend_multimodelo_soja/backends/unsloth_backend.py`
 - `src/backend_multimodelo_soja/backends/backend_registry.py`
 
 Responsabilidades:
 
 - carregar processor e modelo conforme a familia
-- aplicar LoRA ou QLoRA
+- aplicar LoRA ou QLoRA com resolucao dinamica dos modulos alvo
 - executar treino supervisionado
 - selecionar melhor epoca por `val_macro_f1`
 - recarregar adapter e avaliar `test`
@@ -181,6 +210,22 @@ pip install --upgrade --pre transformers
 
 O arquivo [finetune_config.yaml](/c:/Projetos/Pos_ia/TCC/fine_tuning_backend_multimodelo_soja/finetune_config.yaml) concentra a configuracao do runtime.
 
+### Uso atual
+
+O caminho suportado nesta versao do projeto e:
+
+```yaml
+base_model_id: mistralai/Ministral-3-3B-Instruct-2512-BF16
+backend:
+  name: transformers
+  runtime_family: transformers
+  model_family: ministral3
+  quantization_mode: qlora_4bit
+  enable_unsloth: false
+  enable_transformers_fallback: true
+  extra_requirements_profile: transformers-cu128
+```
+
 ### Papel de cada campo
 
 - `base_model_id`: checkpoint exato a ser carregado.
@@ -188,223 +233,52 @@ O arquivo [finetune_config.yaml](/c:/Projetos/Pos_ia/TCC/fine_tuning_backend_mul
 - `backend.runtime_family`: familia logica do runtime efetivo.
 - `backend.model_family`: familia logica do modelo para regras especificas.
 - `backend.quantization_mode`: estrategia principal de quantizacao.
-- `backend.enable_unsloth`: tenta Unsloth antes de fallback.
+- `backend.enable_unsloth`: mantido apenas por compatibilidade historica; o caminho estavel atual nao depende dele.
 - `backend.enable_transformers_fallback`: permite cair para `transformers`.
 - `backend.extra_requirements_profile`: perfil sugerido de dependencias da maquina.
 
 Regra pratica: `model_family` nao substitui `base_model_id`.
 `model_family` diz como tratar a familia; `base_model_id` diz qual checkpoint concreto carregar.
 
-### Presets recomendados por familia
+### Como o LoRA escolhe os modulos
 
-Abaixo estao presets prontos para todas as familias citadas no backend de referencia original.
+Por padrao, este projeto nao depende mais de uma lista fixa de `target_modules` no YAML. O backend inspeciona o modelo carregado e resolve dinamicamente quais sufixos de modulo existem de fato para aquela arquitetura.
 
-| Familia | Exemplo de `base_model_id` | `backend.name` | `runtime_family` | `model_family` | Caminho recomendado |
-| --- | --- | --- | --- | --- | --- |
-| Ministral 3 3B | `mistralai/Ministral-3-3B-Instruct-2512-BF16` | `unsloth` | `unsloth` | `ministral3` | Unsloth principal |
-| Ministral 3 8B | `mistralai/Ministral-3-8B-Instruct-2512-BF16` | `unsloth` | `unsloth` | `ministral3` | Unsloth principal |
-| Llama 3.x | `meta-llama/Llama-3.2-11B-Vision-Instruct` | `unsloth` | `unsloth` | `llama3` | Unsloth principal |
-| Llama 4 | `unsloth/Llama-4-Scout-17B-16E-Instruct` | `unsloth` | `unsloth` | `llama4` | Unsloth principal |
-| Qwen 2.5 texto | `Qwen/Qwen2.5-7B-Instruct` | `unsloth` | `unsloth` | `qwen25` | Unsloth principal |
-| Qwen 3 texto | `Qwen/Qwen3-8B` | `unsloth` | `unsloth` | `qwen3` | Unsloth principal |
-| Qwen 2.5 VL | `Qwen/Qwen2.5-VL-7B-Instruct` | `unsloth` | `unsloth` | `qwen25vl` | Unsloth principal |
-| Qwen 3 VL | `Qwen/Qwen3-VL-8B-Instruct` | `unsloth` | `unsloth` | `qwen3vl` | Unsloth principal |
-| Gemma 3 4B | `google/gemma-3-4b-it` | `unsloth` | `unsloth` | `gemma3` | Unsloth principal |
-| Gemma 3 12B | `google/gemma-3-12b-it` | `unsloth` | `unsloth` | `gemma3` | Unsloth principal |
-| DeepSeek VL | `deepseek-ai/deepseek-vl2-small` | `transformers` | `transformers` | `deepseek_vl` | Fallback em transformers |
-| DeepSeek OCR | `deepseek-ai/DeepSeek-OCR-2` | `transformers` | `transformers` | `deepseek_ocr` | Fallback em transformers |
-| Phi 3 Vision | `microsoft/Phi-3.5-vision-instruct` | `transformers` | `transformers` | `phi3_vision` | Fallback em transformers |
+Comportamento atual:
 
-### Exemplos concretos do bloco `backend`
+- usa um conjunto base de sufixos comuns a transformers causais, como `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj` e `down_proj`
+- adiciona extras conhecidos por familia quando fizer sentido, como o projector multimodal do `Ministral 3`
+- filtra automaticamente apenas os sufixos que realmente existem no modelo carregado
+- registra no log um resumo da resolucao, incluindo cobertura em texto, visao e projector
 
-#### Ministral 3 3B
+O campo `lora.target_modules` continua disponivel apenas como override manual. Ele deve ser usado somente quando voce quiser fixar explicitamente o escopo do experimento.
 
-```yaml
-base_model_id: mistralai/Ministral-3-3B-Instruct-2512-BF16
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: ministral3
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
+### Familias mapeadas no projeto
 
-#### Ministral 3 8B
+As familias abaixo continuam documentadas porque o codigo e o YAML contemplam esses `model_family`, mas isso nao significa que todas estejam homologadas no ambiente atual.
 
-```yaml
-base_model_id: mistralai/Ministral-3-8B-Instruct-2512-BF16
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: ministral3
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Llama 3.x
-
-```yaml
-base_model_id: meta-llama/Llama-3.2-11B-Vision-Instruct
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: llama3
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Llama 4
-
-```yaml
-base_model_id: unsloth/Llama-4-Scout-17B-16E-Instruct
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: llama4
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Qwen 2.5 texto
-
-```yaml
-base_model_id: Qwen/Qwen2.5-7B-Instruct
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: qwen25
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Qwen 3 texto
-
-```yaml
-base_model_id: Qwen/Qwen3-8B
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: qwen3
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Qwen 2.5 VL
-
-```yaml
-base_model_id: Qwen/Qwen2.5-VL-7B-Instruct
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: qwen25vl
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Qwen 3 VL
-
-```yaml
-base_model_id: Qwen/Qwen3-VL-8B-Instruct
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: qwen3vl
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Gemma 3 4B
-
-```yaml
-base_model_id: google/gemma-3-4b-it
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: gemma3
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### Gemma 3 12B
-
-```yaml
-base_model_id: google/gemma-3-12b-it
-backend:
-  name: unsloth
-  runtime_family: unsloth
-  model_family: gemma3
-  quantization_mode: qlora_4bit
-  enable_unsloth: true
-  enable_transformers_fallback: true
-  extra_requirements_profile: unsloth-cu124
-```
-
-#### DeepSeek VL
-
-```yaml
-base_model_id: deepseek-ai/deepseek-vl2-small
-backend:
-  name: transformers
-  runtime_family: transformers
-  model_family: deepseek_vl
-  quantization_mode: qlora_4bit
-  enable_unsloth: false
-  enable_transformers_fallback: true
-  extra_requirements_profile: transformers-cu124
-```
-
-#### DeepSeek OCR
-
-```yaml
-base_model_id: deepseek-ai/DeepSeek-OCR-2
-backend:
-  name: transformers
-  runtime_family: transformers
-  model_family: deepseek_ocr
-  quantization_mode: qlora_4bit
-  enable_unsloth: false
-  enable_transformers_fallback: true
-  extra_requirements_profile: transformers-cu124
-```
-
-#### Phi 3 Vision
-
-```yaml
-base_model_id: microsoft/Phi-3.5-vision-instruct
-backend:
-  name: transformers
-  runtime_family: transformers
-  model_family: phi3_vision
-  quantization_mode: qlora_4bit
-  enable_unsloth: false
-  enable_transformers_fallback: true
-  extra_requirements_profile: transformers-cu124
-```
+| Familia | Exemplo de `base_model_id` | `model_family` | Status nesta versao |
+| --- | --- | --- | --- |
+| Ministral 3 3B | `mistralai/Ministral-3-3B-Instruct-2512-BF16` | `ministral3` | Caminho estavel atual |
+| Ministral 3 8B | `mistralai/Ministral-3-8B-Instruct-2512-BF16` | `ministral3` | Referencia futura; validar conforme VRAM |
+| Llama 3.x | `meta-llama/Llama-3.2-11B-Vision-Instruct` | `llama3` | Referencia futura |
+| Llama 4 | `unsloth/Llama-4-Scout-17B-16E-Instruct` | `llama4` | Referencia futura |
+| Qwen 2.5 texto | `Qwen/Qwen2.5-7B-Instruct` | `qwen25` | Referencia futura |
+| Qwen 3 texto | `Qwen/Qwen3-8B` | `qwen3` | Referencia futura |
+| Qwen 2.5 VL | `Qwen/Qwen2.5-VL-7B-Instruct` | `qwen25vl` | Referencia futura |
+| Qwen 3 VL | `Qwen/Qwen3-VL-8B-Instruct` | `qwen3vl` | Referencia futura |
+| Gemma 3 4B | `google/gemma-3-4b-it` | `gemma3` | Referencia futura |
+| Gemma 3 12B | `google/gemma-3-12b-it` | `gemma3` | Referencia futura |
+| DeepSeek VL | `deepseek-ai/deepseek-vl2-small` | `deepseek_vl` | Mapeado para `transformers` |
+| DeepSeek OCR | `deepseek-ai/DeepSeek-OCR-2` | `deepseek_ocr` | Mapeado para `transformers` |
+| Phi 3 Vision | `microsoft/Phi-3.5-vision-instruct` | `phi3_vision` | Mapeado para `transformers` |
 
 ### Regras de decisao rapida
 
-- Prefira `unsloth` para Ministral, Llama, Qwen e Gemma quando houver guia oficial claro da familia.
-- Prefira `transformers` para familias em que o suporte Unsloth ainda esteja menos claro no seu ambiente real.
+- Para esta versao, use `transformers` como backend operacional.
 - Em modelos de visao, confirme sempre se o checkpoint escolhido e realmente `vision` ou `VL`, e nao a variante texto apenas.
 - Se trocar de familia, troque `base_model_id` e `backend.model_family` juntos.
+- Trate modelos fora do baseline atual como referencia futura ate que sejam validados em run propria.
 
 ## Como o projeto preserva comparabilidade metodologica
 
@@ -433,7 +307,7 @@ O pipeline falha explicitamente se:
 
 ## Como rodar o piloto de um fold
 
-O piloto obrigatorio deve usar apenas `fold_0`, subset reduzido e `1` epoca. O YAML padrao ja nasce configurado para isso.
+O piloto recomendado usa apenas `fold_0`, subset reduzido e `1` epoca. Ajuste `pilot_mode.enabled: true` no YAML antes de rodar, porque o arquivo atual pode estar configurado para execucao completa.
 
 ### 1. Executar o fold piloto
 
@@ -502,7 +376,7 @@ Fluxo recomendado:
 Exemplo:
 
 ```powershell
-python run_model_cv.py --config finetune_config.yaml --run-dir outputs/ministral_3_3b_instruct_2512_bf16_unsloth_20260328_132513_cv_full --start-fold 1
+python run_model_cv.py --config finetune_config.yaml --run-dir outputs/ministral_3_3b_instruct_2512_bf16_transformers_20260328_132513_cv_full --start-fold 1
 ```
 
 Esse comando:
@@ -565,14 +439,14 @@ python -c "from pathlib import Path; from src.backend_multimodelo_soja.experimen
 ### Rodar apenas a agregacao de uma run ja concluida
 
 ```powershell
-python aggregate_model_cv.py --run-dir outputs/ministral_3_3b_instruct_2512_bf16_unsloth_20260328_132513_cv_full
+python aggregate_model_cv.py --run-dir outputs/ministral_3_3b_instruct_2512_bf16_transformers_20260328_132513_cv_full
 ```
 
 ## Estado atual da v1
 
-- `transformers_backend.py` e o caminho minimo funcional de treino e inferencia
-- `unsloth_backend.py` ja participa da arquitetura e registra fallback ou modo de compatibilidade da v1
-- a extensao para integracao nativa da Unsloth pode ser feita sem mudar a camada de orquestracao
+- `transformers_backend.py` e o caminho funcional e suportado de treino e inferencia
+- a orquestracao permanece pronta para evolucao futura por backend, mas esta versao deve ser lida como baseline `transformers`
+- qualquer retomada da trilha `unsloth` deve ocorrer como trabalho futuro, em branch ou versao separada, sem contaminar o baseline estavel
 
 ## Observacao operacional final
 

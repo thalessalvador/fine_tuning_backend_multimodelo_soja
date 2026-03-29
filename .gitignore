@@ -49,3 +49,4 @@ unsloth_compiled_cache/
 Thumbs.db
 Desktop.ini
 .DS_Store
+.hf_cache/

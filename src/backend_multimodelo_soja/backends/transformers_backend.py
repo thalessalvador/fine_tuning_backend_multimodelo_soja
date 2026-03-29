@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import copy
 import importlib.metadata
 import json
 import time
@@ -8,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import torch
+from torch import nn
 from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -109,6 +111,96 @@ def current_vram_gb() -> float:
     return float(torch.cuda.max_memory_allocated() / (1024 ** 3))
 
 
+DEFAULT_LORA_TARGET_MODULES = [
+    'q_proj',
+    'k_proj',
+    'v_proj',
+    'o_proj',
+    'gate_proj',
+    'up_proj',
+    'down_proj',
+]
+
+FAMILY_EXTRA_LORA_TARGET_MODULES = {
+    'ministral3': ['linear_1', 'linear_2', 'merging_layer'],
+}
+
+
+def _candidate_lora_target_modules(config: Dict[str, Any]) -> List[str]:
+    """Resolve a lista desejada de modulos alvo para LoRA.
+
+    Parametros:
+        config: Configuracao resolvida da run.
+
+    Retorno:
+        List[str]: Sufixos de modulos desejados, vindos do override ou do padrao dinamico.
+    """
+    override = config['lora'].get('target_modules')
+    if override:
+        return [str(item).strip() for item in override if str(item).strip()]
+
+    model_family = str(config['backend'].get('model_family', '')).strip().lower()
+    resolved = list(DEFAULT_LORA_TARGET_MODULES)
+    resolved.extend(FAMILY_EXTRA_LORA_TARGET_MODULES.get(model_family, []))
+    return resolved
+
+
+def _module_bucket(module_name: str) -> str:
+    """Classifica um modulo em texto, visao, projector ou outro.
+
+    Parametros:
+        module_name: Nome completo do modulo.
+
+    Retorno:
+        str: Categoria resumida do modulo.
+    """
+    lower = module_name.lower()
+    if 'vision_tower' in lower or '.vision_' in lower or lower.startswith('vision_'):
+        return 'vision'
+    if 'multi_modal_projector' in lower or 'mm_projector' in lower or 'projector' in lower:
+        return 'projector'
+    if 'language_model' in lower or 'text_model' in lower or 'lm_head' in lower:
+        return 'text'
+    return 'other'
+
+
+def resolve_lora_target_modules(model, config: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:
+    """Descobre dinamicamente quais sufixos de modulo LoRA existem no modelo.
+
+    Parametros:
+        model: Modelo ja carregado.
+        config: Configuracao resolvida da run.
+
+    Retorno:
+        Tuple[List[str], Dict[str, Any]]: Sufixos resolvidos e relatorio resumido de cobertura.
+    """
+    desired_suffixes = _candidate_lora_target_modules(config)
+    linear_module_names = [name for name, module in model.named_modules() if isinstance(module, nn.Linear)]
+
+    matched_suffixes: List[str] = []
+    matched_names: List[str] = []
+    coverage = {'text': 0, 'vision': 0, 'projector': 0, 'other': 0}
+
+    for suffix in desired_suffixes:
+        suffix_matches = [
+            name for name in linear_module_names if name == suffix or name.endswith(f'.{suffix}')
+        ]
+        if suffix_matches:
+            matched_suffixes.append(suffix)
+            matched_names.extend(suffix_matches)
+            for module_name in suffix_matches:
+                coverage[_module_bucket(module_name)] += 1
+
+    report = {
+        'requested_suffixes': desired_suffixes,
+        'resolved_suffixes': matched_suffixes,
+        'matched_module_count': len(matched_names),
+        'coverage': coverage,
+        'sample_modules': matched_names[:20],
+    }
+    return matched_suffixes, report
+
+
 class TransformersTrainingBackend(BaseTrainingBackend):
     """Backend multimodal baseado em transformers, PEFT e bitsandbytes."""
 
@@ -182,23 +274,33 @@ class TransformersTrainingBackend(BaseTrainingBackend):
         if quantization_config is not None:
             model = prepare_model_for_kbit_training(model)
 
-        if apply_lora and bool(config["lora"].get("enabled", True)):
+        if apply_lora and bool(config['lora'].get('enabled', True)):
+            target_modules, resolution_report = resolve_lora_target_modules(model, config)
+            if not target_modules:
+                raise ValueError(
+                    'Nenhum modulo LoRA compativel foi encontrado no modelo para os sufixos desejados.'
+                )
             lora_config = LoraConfig(
-                r=int(config["lora"]["r"]),
-                lora_alpha=int(config["lora"]["alpha"]),
-                lora_dropout=float(config["lora"]["dropout"]),
-                target_modules=list(config["lora"]["target_modules"]),
-                bias="none",
-                task_type="CAUSAL_LM",
+                r=int(config['lora']['r']),
+                lora_alpha=int(config['lora']['alpha']),
+                lora_dropout=float(config['lora']['dropout']),
+                target_modules=target_modules,
+                bias='none',
+                task_type='CAUSAL_LM',
             )
             model = get_peft_model(model, lora_config)
+            setattr(model, '_lora_resolution_report', resolution_report)
 
-        if bool(memory.get("gradient_checkpointing", False)):
+        if bool(memory.get('gradient_checkpointing', False)):
             model.gradient_checkpointing_enable()
-            if hasattr(model, "enable_input_require_grads"):
+            if hasattr(model, 'enable_input_require_grads'):
                 model.enable_input_require_grads()
-            if hasattr(model, "config"):
+            if hasattr(model, 'config'):
                 model.config.use_cache = False
+
+        resolution_report = getattr(model, '_lora_resolution_report', None)
+        if resolution_report is not None and hasattr(model, 'config'):
+            setattr(model.config, 'lora_resolution_report', resolution_report)
 
         return processor, model
 
@@ -232,6 +334,16 @@ class TransformersTrainingBackend(BaseTrainingBackend):
         model_dtype = model_float_dtype(model)
         total_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
+
+        resolution_report = getattr(getattr(model, 'config', None), 'lora_resolution_report', None)
+        if resolution_report:
+            logger.info(
+                'lora_resolution requested=%s resolved=%s coverage=%s matched_module_count=%s',
+                resolution_report['requested_suffixes'],
+                resolution_report['resolved_suffixes'],
+                resolution_report['coverage'],
+                resolution_report['matched_module_count'],
+            )
 
         step_times: List[float] = []
         start_epoch = time.perf_counter()
@@ -317,11 +429,16 @@ class TransformersTrainingBackend(BaseTrainingBackend):
                     return_tensors="pt",
                 )
                 model_inputs = move_inputs_to_device(model_inputs, device, model_float_dtype(model))
-                generated_ids = model.generate(
+                generation_kwargs = {
                     **model_inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,
-                )
+                    'max_new_tokens': max_new_tokens,
+                    'do_sample': False,
+                }
+                if getattr(model, 'generation_config', None) is not None:
+                    generation_config = copy.deepcopy(model.generation_config)
+                    generation_config.max_length = None
+                    generation_kwargs['generation_config'] = generation_config
+                generated_ids = model.generate(**generation_kwargs)
                 input_lengths = model_inputs["attention_mask"].sum(dim=1)
                 raw_outputs = []
                 normalized_labels = []

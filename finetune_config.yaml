@@ -20,10 +20,10 @@ label_set:
 backend:
   # Nome do backend principal a ser usado pela orquestracao.
   # Valores validos hoje: unsloth, transformers.
-  name: unsloth
+  name: transformers
   # Familia de runtime efetiva.
   # Em geral deve acompanhar backend.name, mas fica explicita para auditoria.
-  runtime_family: unsloth
+  runtime_family: transformers
   # Familia logica do modelo para regras de compatibilidade.
   # Valores recomendados neste projeto:
   # - ministral3
@@ -45,18 +45,22 @@ backend:
   # - full_fp16
   quantization_mode: qlora_4bit
   # Indica se a execucao deve tentar Unsloth primeiro.
-  enable_unsloth: true
+  enable_unsloth: false
   # Permite fallback para transformers quando necessario.
   enable_transformers_fallback: true
   # Perfil extra de dependencias recomendado para o ambiente.
   # Exemplos:
   # - unsloth-cu124
   # - unsloth-cu121
-  # - transformers-cu124
+  # - transformers-cu128
   # - transformers-cu121
   # - transformers-cpu
-  extra_requirements_profile: unsloth-cu124
+  extra_requirements_profile: transformers-cu128
 
+# Estado atual: o caminho estavel e suportado neste repositorio e transformers.
+# As tentativas com unsloth em RTX 5070 / Blackwell ficaram adiadas para uma versao futura.
+# Os presets comentados abaixo servem como referencia futura de familias e checkpoints.
+# Eles nao alteram o fato de que o caminho suportado hoje nesta versao e transformers.
 # Guia rapido para trocar de familia de modelo.
 # Ajuste SEMPRE backend + base_model_id em conjunto.
 #
@@ -179,7 +183,7 @@ backend:
 #   quantization_mode: qlora_4bit
 #   enable_unsloth: false
 #   enable_transformers_fallback: true
-#   extra_requirements_profile: transformers-cu124
+#   extra_requirements_profile: transformers-cu128
 #
 # DeepSeek OCR:
 # base_model_id: deepseek-ai/DeepSeek-OCR-2
@@ -190,7 +194,7 @@ backend:
 #   quantization_mode: qlora_4bit
 #   enable_unsloth: false
 #   enable_transformers_fallback: true
-#   extra_requirements_profile: transformers-cu124
+#   extra_requirements_profile: transformers-cu128
 #
 # Phi 3 Vision:
 # base_model_id: microsoft/Phi-3.5-vision-instruct
@@ -201,7 +205,7 @@ backend:
 #   quantization_mode: qlora_4bit
 #   enable_unsloth: false
 #   enable_transformers_fallback: true
-#   extra_requirements_profile: transformers-cu124
+#   extra_requirements_profile: transformers-cu128
 
 training:
   # Semente global para reproducibilidade entre execucoes.
@@ -254,22 +258,25 @@ lora:
   alpha: 16
   # Dropout aplicado nas camadas LoRA.
   dropout: 0.0
-  # Modulos alvo onde os adapters LoRA serao inseridos.
-  target_modules:
-    - q_proj
-    - k_proj
-    - v_proj
-    - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  # Override opcional dos modulos alvo do LoRA.
+  # Quando omitido, o backend resolve dinamicamente os sufixos compativeis
+  # para o modelo atual, priorizando texto, visao e projector quando houver.
+  # Descomente apenas se quiser fixar manualmente o escopo do experimento.
+  # target_modules:
+  #   - q_proj
+  #   - k_proj
+  #   - v_proj
+  #   - o_proj
+  #   - gate_proj
+  #   - up_proj
+  #   - down_proj
 
 pilot_mode:
   # Define se a execucao usa subconjuntos reduzidos para validacao rapida do pipeline.
   enabled: false
   # Limite de amostras de treino por fold no modo piloto.
-  max_train_samples_per_fold: 256
+  max_train_samples_per_fold: 64
   # Limite de amostras de validacao por fold no modo piloto.
-  max_val_samples_per_fold: 64
+  max_val_samples_per_fold: 32
   # Limite de amostras de teste por fold no modo piloto.
-  max_test_samples_per_fold: 64
+  max_test_samples_per_fold: 32
