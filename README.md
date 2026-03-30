@@ -408,6 +408,143 @@ Por run completa:
 - `thesis_summary_table.csv`
 - `thesis_folds_table.csv`
 
+## Como preparar handoff para inferencia externa
+
+O artefato principal para consumo pelo projeto `ensaio_classif_soja_llm_multimodais` agora deve ser tratado como um manifesto de handoff para `HF/Transformers`, e nao apenas como export para `Ollama`.
+
+O script [prepare_inference_handoff.py](/c:/Projetos/Pos_ia/TCC/fine_tuning_backend_multimodelo_soja/prepare_inference_handoff.py) gera um `inference_handoff.json` na raiz da run com:
+
+- `base_model_id`
+- `model_family`
+- `runtime_family`
+- `quantization_mode`
+- `train_prompt`
+- `max_new_tokens`
+- `source_experiment_dir`
+- lista de folds com `adapter_dir`, `fold_manifest_path` e caminhos auxiliares
+
+Exemplo:
+
+```powershell
+python prepare_inference_handoff.py `
+  --run-dir outputs/ministral_3_3b_instruct_2512_bf16_transformers_20260328_132513_cv_full
+```
+
+Esse manifesto foi pensado para viabilizar dois cenarios no projeto consumidor:
+
+- `hf_transformers` com `model_source=base`
+- `hf_transformers` com `model_source=finetuned`, usando `fold_<i>/adapter`
+
+A comparacao metodologicamente principal deve ocorrer nesse mesmo runtime `HF/Transformers`, variando apenas entre:
+
+- modelo base puro
+- modelo base com o adapter fine-tunado do fold
+
+O caminho `Ollama` permanece util como trilha secundaria de deploy e comparacao operacional.
+
+## Como treinar um modelo final unico para uso geral
+
+Depois de fechar a fase de CV, este repositorio tambem suporta uma trilha separada de treino final de producao, sem folds. Essa trilha nao reutiliza nenhum `adapter` da CV. Ela cria uma nova run unica e treina um novo `adapter/` a partir da base deduplicada dos manifests congelados em `source_experiment_dir`.
+
+O script [train_final_model.py](/c:/Projetos/Pos_ia/TCC/fine_tuning_backend_multimodelo_soja/train_final_model.py) faz isso usando:
+
+- todos os registros unicos encontrados nos manifests da CV
+- split interno estratificado `train/val`
+- o mesmo `base_model_id`
+- o mesmo backend e a mesma configuracao de LoRA/QLoRA
+
+Exemplo:
+
+```powershell
+python train_final_model.py `
+  --config finetune_config.yaml `
+  --val-ratio 0.10
+```
+
+Esse comando cria uma nova run em `outputs/..._final_model` contendo:
+
+- `adapter/`
+- `run_config.json`
+- `runtime.log`
+- `train_history.json`
+- `val_metrics_best.json`
+- `backend_metadata.json`
+- `final_manifest.csv`
+- `final_model_manifest.json`
+- `inference_handoff.json`
+
+O `inference_handoff.json` dessa run final representa um artefato de modelo unico e deve ser o contrato primario para o projeto consumidor quando o objetivo for uso geral do modelo fine-tunado, sem logica por fold.
+
+Para gerar novamente o handoff de uma run final ja concluida:
+
+```powershell
+python prepare_inference_handoff.py `
+  --run-dir outputs\seu_modelo_final_aqui
+```
+
+## Como preparar adapters para uso no Ollama
+
+Este repositorio produz um `adapter/` por fold. Para comparacao cientifica principal, o projeto de inferencia deve preferir o manifesto `inference_handoff.json` e carregar o adapter localmente via `HF/Transformers`. O caminho abaixo fica mantido para tentativas de deploy e consumo via `Ollama`.
+
+O script [prepare_ollama_artifacts.py](/c:/Projetos/Pos_ia/TCC/fine_tuning_backend_multimodelo_soja/prepare_ollama_artifacts.py) materializa esse passo.
+
+O export foi desenhado para ser reaproveitavel entre familias de modelo. Hoje a estrategia implementada e `adapter`; a estrategia `merge_gguf` fica prevista como evolucao futura do mesmo contrato.
+
+Exemplo para preparar apenas o `fold_0`:
+
+```powershell
+python prepare_ollama_artifacts.py `
+  --run-dir outputs/ministral_3_3b_instruct_2512_bf16_transformers_20260328_132513_cv_full `
+  --folds 0 `
+  --ollama-base-model ministral-3:3b `
+  --ollama-model-template soja-ministral3b-ft-fold{fold}
+```
+
+Esse comando gera, dentro de `fold_0/ollama_export/`:
+
+- `Modelfile`
+- `ollama_export.json`
+
+E tambem salva um resumo da run em:
+
+- `ollama_exports_summary.json`
+
+Se quiser tentar criar o modelo diretamente no Ollama, adicione `--create`:
+
+```powershell
+python prepare_ollama_artifacts.py `
+  --run-dir outputs/ministral_3_3b_instruct_2512_bf16_transformers_20260328_132513_cv_full `
+  --folds 0 `
+  --ollama-base-model ministral-3:3b `
+  --ollama-model-template soja-ministral3b-ft-fold{fold} `
+  --create
+```
+
+Observacoes:
+
+- o export atual usa a estrategia `adapter`, baseada em `ADAPTER` no `Modelfile`
+- o script prepara o artefato de deploy, mas nao garante compatibilidade da arquitetura com `ADAPTER`
+- a validacao real do caminho de deploy acontece quando `ollama create` e executado e o modelo e testado no projeto de inferencia
+- o parametro `--export-strategy` ja existe para manter o contrato generico do export; hoje `adapter` esta implementado e `merge_gguf` permanece como trilha futura
+
+Exemplo de invocacao da trilha `merge_gguf`:
+
+```powershell
+python prepare_ollama_artifacts.py `
+  --run-dir outputs/ministral_3_3b_instruct_2512_bf16_transformers_20260328_132513_cv_full `
+  --folds 0 `
+  --ollama-base-model ministral-3:3b `
+  --ollama-model-template soja-ministral3b-ft-fold{fold} `
+  --export-strategy merge_gguf `
+  --merge-device cpu `
+  --llama-cpp-convert-script C:\caminho\para\llama.cpp\convert_hf_to_gguf.py `
+  --llama-cpp-quantize-bin C:\caminho\para\llama-quantize.exe `
+  --gguf-outtype f16 `
+  --gguf-quant-type Q4_K_M
+```
+
+Se os caminhos do `llama.cpp` nao forem informados, o script ainda faz o merge do adapter com o modelo base e registra o estado como `merged_hf_ready`.
+
 ## Como manter comparabilidade com `ensaio_classif_soja_llm_multimodais`
 
 1. Nao altere os manifests externos.
